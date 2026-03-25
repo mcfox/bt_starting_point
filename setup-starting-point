@@ -1,0 +1,264 @@
+#!/usr/bin/env ruby
+
+require 'fileutils'
+
+def ask(question)
+  print "#{question} [Y/n]: "
+  answer = gets.chomp.downcase
+  answer == '' || answer == 'y'
+end
+
+def log(message)
+  puts "=> #{message}"
+end
+
+def replace_in_file(path, search, replace)
+  return unless File.exist?(path)
+  content = File.read(path)
+  if content.include?(search)
+    new_content = content.gsub(search, replace)
+    File.write(path, new_content)
+    log "Atualizado: #{path}"
+  else
+    log "Aviso: '#{search}' não encontrado em #{path}"
+  end
+end
+
+def append_to_file(path, content, after: nil)
+  return unless File.exist?(path)
+  file_content = File.read(path)
+  return if file_content.include?(content.strip)
+
+  if after
+    new_content = file_content.gsub(after, "#{after}\n#{content}")
+    File.write(path, new_content)
+  else
+    File.open(path, 'a') { |f| f.puts "\n#{content}" }
+  end
+  log "Adicionado conteúdo a: #{path}"
+end
+
+log "Iniciando configuração do ponto de partida (Starting Point)..."
+
+# 1. Gemfile
+if ask("Deseja atualizar o Gemfile com as novas gems?")
+  append_to_file "Gemfile", <<~GEMS, after: "# YOUR GEMS"
+    gem 'dotenv-rails'
+    gem 'diffy', '~> 3.4'
+    gem 'aws-sdk-s3'
+    gem 'caxlsx'
+    gem 'caxlsx_rails'
+    gem 'roo'
+    gem "honeybadger", "~> 6.4"
+  GEMS
+end
+
+# 3. Configurações de Tema
+if ask("Deseja configurar o tema (gray, navigation left, logo enabled)?")
+  replace_in_file "config/initializers/theme.rb", "BulletTrain::Themes::Light.color = :blue", "BulletTrain::Themes::Light.color = :gray"
+  replace_in_file "config/initializers/theme.rb", "# BulletTrain::Themes::Light.navigation = :left", "BulletTrain::Themes::Light.navigation = :left"
+  replace_in_file "config/initializers/theme.rb", "# BulletTrain::Themes::Light.show_logo_in_account = true", "BulletTrain::Themes::Light.show_logo_in_account = true"
+end
+
+# 4. Customização de Menu e UI
+if ask("Deseja aplicar customizações de Menu e UI (Sidekiq, Swagger, Logo)?")
+  # Expandir menu por padrão
+  replace_in_file "app/views/account/shared/_menu.html.erb", "<% expand ||= false %>", "<% expand ||= true %>"
+  
+  # Extrair Developer Items
+  developer_menu_old = <<~HTML
+    <%= render 'account/shared/menu/subsection', title: t('menus.main.labels.developers'), expand: expand do %>
+      <%= render 'account/platform/applications/menu_item' %>
+      <%= render 'account/webhooks/outgoing/endpoints/menu_item' if webhooks_enabled? %>
+    <% end %>
+  HTML
+  replace_in_file "app/views/account/shared/_menu.html.erb", developer_menu_old, '<%= render "account/shared/menu/developer_items" %>'
+
+  # Criar partial developer_items
+  dev_items_content = <<~HTML
+    <% expand = true %>
+    <%= render 'account/shared/menu/subsection', title: t('menus.main.labels.developers'), expand: expand do %>
+      <%= render 'account/platform/applications/menu_item' %>
+      <%= render 'account/webhooks/outgoing/endpoints/menu_item' if webhooks_enabled? %>
+      <%= render 'account/shared/menu/item', url: '/developers/sidekiq', target: '_blank', label: 'Sidekiq' do |p| %>
+        <% p.content_for :icon do %>
+          <i class="fal fa-tasks ti ti-settings"></i>
+        <% end %>
+      <% end %>
+      <%= render 'account/shared/menu/item', url: '/api/v1/docs', target: '_blank', label: 'Documentação da API' do |p| %>
+        <% p.content_for :icon do %>
+          <i class="fal fa-book ti ti-settings"></i>
+        <% end %>
+      <% end %>
+      <%= render 'account/shared/menu/item', url: 'https://app.honeybadger.io/projects/137722/faults?q=-is%3Aresolved+-is%3Aignored&sort=last_seen_desc', target: '_blank', label: 'Log de Erros' do |p| %>
+        <% p.content_for :icon do %>
+          <i class="fal fa-user-cog ti ti-user"></i>
+        <% end %>
+      <% end %>
+    <% end %>
+  HTML
+  File.write("app/views/account/shared/menu/_developer_items.html.erb", dev_items_content)
+  log "Criado: app/views/account/shared/menu/_developer_items.html.erb"
+
+  # Eject do Logo
+  logo_content = <<~HTML
+    <% # Ejected from `bullet_train-themes-light`. %>
+    <% if BulletTrain::Themes::Light.show_logo_in_account %>
+      <div class="flex items-center shrink-0 p-4 bg-primary-900 md:rounded-tl-lg electron-draggable electron-title-bar dark:bg-black/10">
+        <% if current_team&.team_logo&.attached? %>
+          <%= image_tag url_for(current_team.team_logo), class: 'theme-logo h-12 w-auto mx-auto' %>
+        <% else %>
+          <%= image_tag image_path("logo/logo.png"), class: 'theme-logo h-12 w-auto mx-auto' %>
+        <% end %>
+        <%= render "account/shared/menu/close" %>
+      </div>
+    <% end %>
+  HTML
+  FileUtils.mkdir_p("app/views/themes/light/menu")
+  File.write("app/views/themes/light/menu/_logo.html.erb", logo_content)
+  log "Criado: app/views/themes/light/menu/_logo.html.erb"
+end
+
+# 5. Model Team e Suporte a Logo
+if ask("Deseja adicionar suporte a Logo e Home URL no modelo Team?")
+  append_to_file "app/models/team.rb", <<~RUBY, after: "# 🚅 add oauth providers above."
+    has_one_attached :team_logo
+    attr_accessor :team_logo_removal
+  RUBY
+  append_to_file "app/models/team.rb", <<~RUBY, after: "# 🚅 add validations above."
+    after_validation :remove_team_logo, if: :team_logo_removal?
+  RUBY
+  append_to_file "app/models/team.rb", <<~RUBY, after: "# 🚅 add delegations above."
+    def team_logo_removal?
+      team_logo_removal.present?
+    end
+
+    def remove_team_logo
+      team_logo.purge
+    end
+  RUBY
+
+  replace_in_file "app/controllers/account/teams_controller.rb", "# 🚅 super scaffolding will insert new fields above this line.", "[:team_logo, :team_logo_removal, :home_url],"
+  
+  # Locales
+  teams_en_fields = <<~YML
+      team_logo:
+        _: &team_logo Team Logo
+        label: *team_logo
+        heading: *team_logo
+        api_title: *team_logo
+        api_description: *team_logo
+      home_url:
+        _: &home_url Home Url
+        label: *home_url
+        heading: *home_url
+        api_title: *home_url
+        api_description: *home_url
+  YML
+  append_to_file "config/locales/en/teams.en.yml", teams_en_fields, after: "_:"
+  
+  # Migração manual (Como é um script de configuração, podemos criar o arquivo de migração se ele não existir)
+  migration_name = "db/migrate/20260222184714_add_team_logo_and_home_url_to_teams.rb"
+  unless File.exist?(migration_name)
+    migration_content = <<~RUBY
+      class AddTeamLogoAndHomeUrlToTeams < ActiveRecord::Migration[8.0]
+        def change
+          add_column :teams, :home_url, :string
+        end
+      end
+    RUBY
+    File.write(migration_name, migration_content)
+    log "Criada migração: #{migration_name}"
+  end
+end
+
+# 6. Documentação Swagger
+if ask("Deseja configurar a Documentação Swagger?")
+  append_to_file "config/routes.rb", "    get 'v1/docs', to: 'docs#index'", after: 'draw "api/v1"'
+  
+  docs_controller = <<~RUBY
+    class Api::DocsController < ApplicationController
+      before_action :authenticate_user!, except: [:index]
+      before_action :authorize_api_docs!, only: [:index]
+
+      def index
+        render :index, layout: false
+      end
+
+      private
+
+      def authorize_api_docs!
+        return if current_user&.developer? || current_user&.admin?
+        head :forbidden
+      end
+    end
+  RUBY
+  File.write("app/controllers/api/docs_controller.rb", docs_controller)
+  log "Criado: app/controllers/api/docs_controller.rb"
+
+  docs_view = <<~HTML
+    <!DOCTYPE html>
+    <html lang="pt">
+    <head>
+      <meta charset="UTF-8">
+      <title>API Documentation</title>
+      <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css">
+      <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"> </script>
+      <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"> </script>
+    </head>
+    <body>
+    <div id="swagger-ui"></div>
+    <script>
+        window.onload = function() {
+            const ui = SwaggerUIBundle({
+                url: "/api/v1/openapi.yaml",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIBundle.presets.apis
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "BaseLayout"
+            })
+            window.ui = ui
+        }
+    </script>
+    </body>
+    </html>
+  HTML
+  FileUtils.mkdir_p("app/views/api/docs")
+  File.write("app/views/api/docs/index.html.erb", docs_view)
+  log "Criado: app/views/api/docs/index.html.erb"
+end
+
+# 7. Documentação Adicional e .junie
+if ask("Deseja copiar os arquivos de documentação e diretório .junie?")
+  log "Aviso: Copiando arquivos via shell para garantir integridade do diretório .junie"
+  system("git checkout bt/starting_point -- .junie doc README.md CLAUDE.md .gitignore .redocly.yaml app.json render.yaml")
+  log "Arquivos de documentação restaurados do branch bt/starting_point"
+end
+
+# 8. Honeybadger
+if ask("Deseja criar a configuração do Honeybadger?")
+  hb_config = <<~YML
+    ---
+    api_key: 'hbp_X61xqR4CIciQ78FBwFGZ8qvoWDCVin2jDemC'
+    env: "<%= Rails.env %>"
+    root: "<%= Rails.root.to_s %>"
+    development_environments:
+    - test
+    - development
+    - cucumber
+    debug: false
+    insights:
+      enabled: true
+  YML
+  File.write("config/honeybadger.yml", hb_config)
+  log "Criado: config/honeybadger.yml"
+end
+
+log "Configuração concluída!"
+log "Lembre-se de rodar 'bundle install' e 'rails db:migrate' se necessário."
