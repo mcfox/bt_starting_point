@@ -3,6 +3,14 @@
 require 'fileutils'
 
 def ask(question)
+  # Ao rodar via `curl | ruby`, o stdin é o script. Precisamos ler do terminal (/dev/tty).
+  tty = File.open('/dev/tty', 'r')
+  print "#{question} [Y/n]: "
+  answer = tty.gets.chomp.downcase
+  tty.close
+  answer == '' || answer == 'y'
+rescue Errno::ENOTTY, Errno::ENOENT
+  # Fallback caso /dev/tty não esteja disponível
   print "#{question} [Y/n]: "
   answer = gets.chomp.downcase
   answer == '' || answer == 'y'
@@ -19,8 +27,6 @@ def replace_in_file(path, search, replace)
     new_content = content.gsub(search, replace)
     File.write(path, new_content)
     log "Atualizado: #{path}"
-  else
-    log "Aviso: '#{search}' não encontrado em #{path}"
   end
 end
 
@@ -97,8 +103,10 @@ if ask("Deseja aplicar customizações de Menu e UI (Sidekiq, Swagger, Logo)?")
       <% end %>
     <% end %>
   HTML
-  File.write("app/views/account/shared/menu/_developer_items.html.erb", dev_items_content)
-  log "Criado: app/views/account/shared/menu/_developer_items.html.erb"
+  path = "app/views/account/shared/menu/_developer_items.html.erb"
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, dev_items_content)
+  log "Criado: #{path}"
 
   # Eject do Logo
   logo_content = <<~HTML
@@ -167,6 +175,7 @@ if ask("Deseja adicionar suporte a Logo e Home URL no modelo Team?")
         end
       end
     RUBY
+    FileUtils.mkdir_p(File.dirname(migration_name))
     File.write(migration_name, migration_content)
     log "Criada migração: #{migration_name}"
   end
@@ -193,8 +202,10 @@ if ask("Deseja configurar a Documentação Swagger?")
       end
     end
   RUBY
-  File.write("app/controllers/api/docs_controller.rb", docs_controller)
-  log "Criado: app/controllers/api/docs_controller.rb"
+  path = "app/controllers/api/docs_controller.rb"
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, docs_controller)
+  log "Criado: #{path}"
 
   docs_view = <<~HTML
     <!DOCTYPE html>
@@ -229,9 +240,10 @@ if ask("Deseja configurar a Documentação Swagger?")
     </body>
     </html>
   HTML
-  FileUtils.mkdir_p("app/views/api/docs")
-  File.write("app/views/api/docs/index.html.erb", docs_view)
-  log "Criado: app/views/api/docs/index.html.erb"
+  path = "app/views/api/docs/index.html.erb"
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, docs_view)
+  log "Criado: #{path}"
 end
 
 # 7. Documentação Adicional e .junie
@@ -256,8 +268,10 @@ if ask("Deseja criar a configuração do Honeybadger?")
     insights:
       enabled: true
   YML
-  File.write("config/honeybadger.yml", hb_config)
-  log "Criado: config/honeybadger.yml"
+  path = "config/honeybadger.yml"
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, hb_config)
+  log "Criado: #{path}"
 end
 
 log "Configuração concluída!"
