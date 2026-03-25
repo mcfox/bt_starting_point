@@ -21,3 +21,10 @@ run this script to:
 - Configurar a Documentação Swagger
 - Copiar os arquivos de documentação e diretório .junie
 - Criar a configuração do Honeybadger
+
+
+para executar esse script, va para a pasta raiz do projeto e execute:
+
+```
+curl -fsSL https://raw.githubusercontent.com/mcfox/bt_starting_point/main/setup-starting-point | ruby
+```
